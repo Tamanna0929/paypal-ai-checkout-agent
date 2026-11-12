@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Checkout Agent</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --line:#26304a; --text:#e8ecf5; --mute:#8d98b3; --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; }
+  header .tag { font-size:11px; padding:2px 8px; border-radius:99px; background:#1e3a8a55; color:#9db8ff; border:1px solid #2b4fb5; }
+  header .status { margin-left:auto; font-size:12px; color:var(--mute); }
+  main { display:grid; grid-template-columns: minmax(340px, 5fr) 7fr; gap:16px; padding:16px; height:calc(100vh - 56px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; height:auto; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; min-height:0; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--mute); margin:0; padding:12px 16px; border-bottom:1px solid var(--line); }
+  #log { flex:1; overflow:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; min-height:300px; }
+  .msg { max-width:92%; padding:9px 12px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
+  .msg.user { align-self:flex-end; background:var(--blue); color:#fff; }
+  .msg.bot { align-self:flex-start; background:#212b42; }
+  .msg.err { align-self:flex-start; background:#4a1d24; color:#ffb4b4; }
+  .chip { font:12px ui-monospace,monospace; color:var(--mute); background:#101726; border:1px solid var(--line); border-radius:8px; padding:6px 9px; align-self:flex-start; max-width:92%; }
+  .chip b { color:#9db8ff; }
+  .chip.bad { border-color:#7f2a35; }
+  .paybtn { display:inline-block; margin-top:6px; background:#ffc439; color:#111; font-weight:700; padding:8px 14px; border-radius:99px; text-decoration:none; }
+  form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
+  input[type=text] { flex:1; background:#0f1626; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.good { background:var(--green); color:#04210f; } button.bad { background:var(--red); }
+  .suggest { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 10px; }
+  .suggest button { font-size:12px; font-weight:500; padding:5px 9px; }
+  .right { display:flex; flex-direction:column; gap:16px; overflow:auto; min-height:0; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding:14px; }
+  .kpi { background:#101726; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .kpi .v { font-size:20px; font-weight:700; } .kpi .l { font-size:11px; color:var(--mute); text-transform:uppercase; letter-spacing:.06em; }
+  #chart { padding:0 14px 14px; } #chart svg { width:100%; height:90px; display:block; }
+  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:8px 14px; border-bottom:1px solid var(--line); font-size:13px; }
+  th { color:var(--mute); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:99px; font-weight:600; }
+  .CREATED { background:#78350f55; color:#fbbf24; } .PAID { background:#14532d66; color:#4ade80; }
+  .PARTIALLY_REFUNDED,.REFUNDED { background:#7f1d1d55; color:#fca5a5; } .PENDING { background:#78350f55; color:#fbbf24; }
+  .APPROVED { background:#14532d66; color:#4ade80; } .REJECTED,.FAILED { background:#7f1d1d55; color:#fca5a5; }
+  .scroll { overflow:auto; max-height:240px; }
+  .banner { margin:0 16px 0; padding:10px 14px; border-radius:10px; display:none; }
+  .banner.ok { display:block; background:#14532d66; color:#bbf7d0; border:1px solid #166534; }
+  .banner.no { display:block; background:#7f1d1d55; color:#fecaca; border:1px solid #991b1b; }
+  .empty { color:var(--mute); padding:14px; }
+  .mono { font-family:ui-monospace,monospace; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Checkout Agent</h1><span class="tag">PayPal Sandbox + AI</span>
+  <span class="status" id="status">checking…</span>
+</header>
+<div class="banner" id="banner"></div>
+<main>
+  <section class="panel">
+    <h2>Agent</h2>
+    <div id="log"></div>
+    <div class="suggest" id="suggest"></div>
+    <form id="form">
+      <input type="text" id="input" placeholder="e.g. Bill Acme Co $450 for logo design + $120 for 2 revisions, 8% tax" autocomplete="off">
+      <button id="send">Send</button>
+    </form>
+  </section>
+  <section class="right">
+    <div class="panel">
+      <h2>Dashboard</h2>
+      <div class="kpis" id="kpis"></div>
+      <div id="chart"></div>
+    </div>
+    <div class="panel" id="approvalsPanel" style="display:none">
+      <h2>Needs your approval (human-in-the-loop)</h2>
+      <div class="scroll"><table id="approvals"></table></div>
+    </div>
+    <div class="panel">
+      <h2>Ledger</h2>
+      <div class="scroll"><table id="ledger"></table></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const chatLog = [];
+const money = (v, c) => `${v} ${c}`;
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  for (const k of kids) e.append(k);
+  return e;
+}
+function add(node) { $('log').append(node); $('log').scrollTop = 1e9; return node; }
+
+function addChip(call) {
+  const bad = call.error;
+  const chip = el('div', { className: 'chip' + (bad ? ' bad' : '') });
+  chip.append(el('b', { textContent: call.name }), document.createTextNode(' ' + summarize(call)));
+  add(chip);
+  const url = call.result && call.result.approve_url;
+  if (url) {
+    const wrap = el('div', { className: 'msg bot' }, `Checkout ready: ${money(call.result.total, call.result.currency)} for ${call.result.customer}\n`);
+    wrap.append(el('a', { className: 'paybtn', href: url, target: '_blank', rel: 'noopener', textContent: 'Pay with PayPal (sandbox)' }));
+    add(wrap);
+  }
+}
+function summarize(c) {
+  if (c.error) return '→ ' + c.result.error;
+  const r = c.result;
+  if (c.name === 'create_checkout') return `→ order ${r.order_id}, ${r.total} ${r.currency}`;
+  if (c.name === 'list_payments') return `→ ${r.count} payment(s)`;
+  if (c.name === 'check_payment_status') return `→ ${r.paypal_status}`;
+  if (c.name === 'request_refund') return `→ ${r.status} (${r.amount} ${r.currency})`;
+  return '→ ok';
+}
+
+async function send(text) {
+  if (!text.trim()) return;
+  add(el('div', { className: 'msg user', textContent: text }));
+  chatLog.push({ role: 'user', content: text });
+  $('send').disabled = true; $('input').value = '';
+  const thinking = add(el('div', { className: 'chip', textContent: 'thinking…' }));
+  try {
+    const res = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: chatLog }) });
+    const data = await res.json();
+    thinking.remove();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    data.calls.forEach(addChip);
+    add(el('div', { className: 'msg bot', textContent: data.reply }));
+    chatLog.push({ role: 'assistant', content: data.reply });
+  } catch (e) {
+    thinking.remove();
+    add(el('div', { className: 'msg err', textContent: e.message }));
+    chatLog.pop();
+  } finally {
+    $('send').disabled = false; $('input').focus(); refresh();
+  }
+}
+$('form').addEventListener('submit', (e) => { e.preventDefault(); send($('input').value); });
+
+const suggestions = [
+  'Bill Acme Co $450 for logo design and $120 x 2 for revisions, 8% tax',
+  'Create checkouts: Globex $900 website audit, Initech EUR 300 consulting',
+  'What is outstanding and who are my top customers?',
+  'Refund the most recent paid order, customer was unhappy',
+];
+suggestions.forEach((s) => $('suggest').append(el('button', { className: 'ghost', type: 'button', textContent: s.length > 38 ? s.slice(0, 36) + '…' : s, title: s, onclick: () => send(s) })));
+
+function renderKpis(sum) {
+  const cur = Object.keys(sum.by_currency)[0];
+  const t = cur ? sum.by_currency[cur] : { net: '0.00', outstanding: '0.00', refunded: '0.00' };
+  const k = [
+    ['Net revenue ' + (cur || ''), t.net], ['Outstanding', t.outstanding],
+    ['Refunded', t.refunded], ['Pending approvals', sum.pending_approvals],
+  ];
+  $('kpis').replaceChildren(...k.map(([l, v]) => el('div', { className: 'kpi' }, el('div', { className: 'v', textContent: String(v) }), el('div', { className: 'l', textContent: l }))));
+  const days = sum.last_14_days, max = Math.max(1, ...days.map((d) => d.net_cents));
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', '0 0 280 90'); svg.setAttribute('preserveAspectRatio', 'none');
+  days.forEach((d, i) => {
+    const h = Math.max(2, (d.net_cents / max) * 70);
+    const r = document.createElementNS(ns, 'rect');
+    r.setAttribute('x', i * 20 + 2); r.setAttribute('y', 80 - h); r.setAttribute('width', 15); r.setAttribute('height', h); r.setAttribute('rx', 3);
+    r.setAttribute('fill', d.net_cents ? '#3b82f6' : '#26304a');
+    const title = document.createElementNS(ns, 'title'); title.textContent = `${d.date}: ${(d.net_cents / 100).toFixed(2)}`; r.append(title);
+    svg.append(r);
+  });
+  $('chart').replaceChildren(svg);
+}
+
+function renderLedger(payments) {
+  const t = $('ledger');
+  if (!payments.length) { t.replaceChildren(el('tbody', {}, el('tr', {}, el('td', { className: 'empty', textContent: 'No payments yet. Ask the agent to bill someone.' })))); return; }
+  const head = el('thead', {}, el('tr', {}, ...['Customer', 'Amount', 'Status', 'Order', 'Receipt'].map((h) => el('th', { textContent: h }))));
+  const body = el('tbody');
+  for (const p of payments) {
+    const amt = `${(p.totalCents / 100).toFixed(2)} ${p.currency}` + (p.refundedCents ? ` (−${(p.refundedCents / 100).toFixed(2)})` : '');
+    const stat = el('td', {}, el('span', { className: 'badge ' + p.status, textContent: p.status.replace('_', ' ') }));
+    const order = el('td', { className: 'mono' });
+    if (p.status === 'CREATED' && p.approveUrl) order.append(el('a', { href: p.approveUrl, target: '_blank', rel: 'noopener', textContent: p.id, style: 'color:#9db8ff' }));
+    else order.textContent = p.id;
+    body.append(el('tr', {}, el('td', { textContent: p.customer }), el('td', { textContent: amt }), stat, order, el('td', { textContent: p.receipt || '', style: 'color:#8d98b3;max-width:260px' })));
+  }
+  t.replaceChildren(head, body);
+}
+
+async function decide(id, decision) {
+  const res = await fetch(`/api/approvals/${id}/${decision}`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) banner('no', data.error);
+  else banner('ok', decision === 'approve' ? 'Refund executed on PayPal sandbox.' : 'Refund rejected.');
+  refresh();
+}
+function renderApprovals(list) {
+  const pending = list.filter((a) => a.status === 'PENDING');
+  $('approvalsPanel').style.display = list.length ? '' : 'none';
+  const head = el('thead', {}, el('tr', {}, ...['Request', 'Reason', 'Status', ''].map((h) => el('th', { textContent: h }))));
+  const body = el('tbody');
+  for (const a of list.slice(0, 8)) {
+    const act = el('td');
+    if (a.status === 'PENDING') {
+      act.append(el('button', { className: 'good', textContent: 'Approve', onclick: () => decide(a.id, 'approve') }), ' ', el('button', { className: 'bad', textContent: 'Reject', onclick: () => decide(a.id, 'reject') }));
+    }
+    body.append(el('tr', {}, el('td', { textContent: `Refund ${(a.amountCents / 100).toFixed(2)} ${a.currency} to ${a.customer}` }), el('td', { textContent: a.reason }), el('td', {}, el('span', { className: 'badge ' + a.status, textContent: a.status })), act));
+  }
+  $('approvals').replaceChildren(head, body);
+  return pending.length;
+}
+
+async function refresh() {
+  try {
+    const d = await (await fetch('/api/ledger')).json();
+    renderKpis(d.summary); renderLedger(d.payments); renderApprovals(d.approvals);
+  } catch {}
+}
+function banner(kind, text) { const b = $('banner'); b.className = 'banner ' + kind; b.textContent = text; setTimeout(() => (b.className = 'banner'), 9000); }
+
+(async function init() {
+  try {
+    const h = await (await fetch('/api/health')).json();
+    $('status').textContent = `${h.paypal_mock ? 'PayPal SIMULATED' : h.paypal_configured ? 'PayPal sandbox ✓' : 'PayPal keys missing'} · ${h.ai_configured ? 'AI ✓' : 'AI key missing'}`;
+    if (h.paypal_mock) { const t = document.querySelector('.tag'); t.textContent = 'SIMULATION MODE: PayPal is simulated locally'; t.style.cssText = 'background:#78350f55;color:#fde68a;border-color:#b45309'; }
+  } catch { $('status').textContent = 'offline'; }
+  const q = new URLSearchParams(location.search);
+  if (q.get('paid')) banner('ok', 'Payment captured on PayPal sandbox. Order ' + q.get('paid') + '. See the AI-written receipt in the ledger.');
+  if (q.get('error')) banner('no', q.get('error'));
+  if (q.toString()) window.history.replaceState(null, '', '/');
+  add(el('div', { className: 'msg bot', textContent: 'Hi! I can bill clients through PayPal, track what is paid or outstanding, and file refund requests for your approval. Try a suggestion below.' }));
+  refresh(); setInterval(refresh, 6000);
+})();
+</script>
+</body>
+</html>
